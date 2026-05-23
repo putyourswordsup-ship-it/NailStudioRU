@@ -195,6 +195,7 @@ def main():
     init_db()
 
     from telegram.ext import ApplicationBuilder
+
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -216,9 +217,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        import traceback
-        print("STARTUP ERROR:")
-        traceback.print_exc()
+    main()
