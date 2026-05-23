@@ -5,7 +5,7 @@ import threading
 from flask import Flask
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     filters,
@@ -13,10 +13,7 @@ from telegram.ext import (
 )
 
 TOKEN = os.getenv("TOKEN")
-
 DB_FILE = "nailsalon.db"
-
-ADMIN_IDS = [123456789]
 
 MASTER_INFO = {
     "Анна": {
@@ -36,6 +33,8 @@ MASTER_INFO = {
 
 def kb(buttons):
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
@@ -59,25 +58,21 @@ def init_db():
     conn.commit()
 
     cur.execute("SELECT COUNT(*) FROM masters")
-
     if cur.fetchone()[0] == 0:
         cur.execute("INSERT INTO masters (name) VALUES (?)", ("Анна",))
         cur.execute("INSERT INTO masters (name) VALUES (?)", ("Мария",))
         cur.execute("INSERT INTO masters (name) VALUES (?)", ("София",))
 
     cur.execute("SELECT COUNT(*) FROM services")
-
     if cur.fetchone()[0] == 0:
         cur.execute(
             "INSERT INTO services (name, price, duration) VALUES (?, ?, ?)",
             ("Маникюр", "600 грн", "60 мин")
         )
-
         cur.execute(
             "INSERT INTO services (name, price, duration) VALUES (?, ?, ?)",
             ("Маникюр + покрытие", "900 грн", "90 мин")
         )
-
         cur.execute(
             "INSERT INTO services (name, price, duration) VALUES (?, ?, ?)",
             ("Педикюр", "800 грн", "75 мин")
@@ -90,13 +85,21 @@ def init_db():
 def get_masters():
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
-
     cur.execute("SELECT name FROM masters")
     rows = cur.fetchall()
-
     conn.close()
-
     return [row[0] for row in rows]
+
+
+def get_services():
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute("SELECT name, price, duration FROM services")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
@@ -126,7 +129,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text in get_masters():
         context.user_data["master"] = text
-
         master_info = MASTER_INFO.get(text)
 
         if master_info:
@@ -136,19 +138,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption=master_info["description"]
                 )
             except Exception as e:
-                print(e)
+                print(f"Photo error: {e}")
                 await update.message.reply_text(master_info["description"])
 
-        conn = sqlite3.connect(DB_FILE)
-        cur = conn.cursor()
-        cur.execute("SELECT name, price, duration FROM services")
-        services = cur.fetchall()
-        conn.close()
-
+        services = get_services()
         keyboard = []
 
-        for service in services:
-            name, price, duration = service
+        for name, price, duration in services:
             keyboard.append([f"{name} • {price} • {duration}"])
 
         keyboard.append(["⬅️ Назад"])
@@ -176,43 +172,38 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ["📞 Контакты"]
             ])
         )
-app_flask = Flask(__name__)
 
 
-@app_flask.route("/")
+web_app = Flask(__name__)
+
+
+@web_app.route("/")
 def home():
     return "Bot is running"
 
 
 def run_flask():
-    app_flask.run(
-        host="0.0.0.0",
-        port=10000
-    )
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
 
 
 def main():
+    if not TOKEN:
+        raise RuntimeError("TOKEN is missing")
+
     init_db()
 
-    from telegram.ext import ApplicationBuilder
+    threading.Thread(
+        target=run_flask,
+        daemon=True
+    ).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            buttons
-        )
-    )
-
-    flask_thread = threading.Thread(target=run_flask)
-
-    flask_thread.start()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, buttons))
 
     print("Bot started")
-
     app.run_polling()
 
 
